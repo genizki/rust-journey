@@ -1,8 +1,11 @@
-use eframe::egui::{self, Button, Color32, Rect, vec2};
+mod locale;
+
+use eframe::egui::{self, Button, Color32, CornerRadius, InnerResponse, Rect, Stroke, Ui, vec2};
 use serde::{Deserialize, Serialize};
 
 // laod .env variables
 use dotenv::dotenv;
+use std::hash::Hash;
 use std::{env, f32};
 
 // Api crates
@@ -48,6 +51,7 @@ enum AppState {
     #[default]
     App,
     Settings,
+    Warning,
     Test,
 }
 
@@ -56,6 +60,7 @@ struct SettingsState {
     max_results: i8,
     first_run: bool,
     download_path: String,
+    personal_yt_api: String,
 }
 impl SettingsState {
     fn default() -> Self {
@@ -63,6 +68,7 @@ impl SettingsState {
             max_results: 8,
             first_run: true,
             download_path: _DOWNLOAD_PATH.to_string(),
+            personal_yt_api: "".to_string(),
         }
     }
 }
@@ -92,78 +98,84 @@ impl YtGUI {
         }
     }
     fn search_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        egui::Frame::default()
-            .show(ui, |ui| {
-                ui.style_mut().spacing.item_spacing = egui::Vec2 { x: 0.0, y: 0.0 };
-                ui.vertical_centered(|ui| {
-                    ui.horizontal_top(|ui| {
-                        // ui.add_space();
-                        // println!("{}", ui.available_width());
-                        let avaibale_width = ui.available_width();
-                        let searchfield_width = avaibale_width * 0.40;
-                        let search_button_width = avaibale_width * 0.10;
-                        let spacing =
-                            (avaibale_width - (searchfield_width + search_button_width)) / 2.0;
+        egui::Frame::default().show(ui, |ui| {
+            ui.style_mut().spacing.item_spacing = egui::Vec2 { x: 0.0, y: 0.0 };
+            ui.vertical_centered(|ui| {
+                ui.horizontal_top(|ui| {
+                    // ui.add_space();
+                    // println!("{}", ui.available_width());
+                    let avaibale_width = ui.available_width();
+                    let searchfield_width = avaibale_width * 0.40;
+                    // let search_button_width = avaibale_width * 0.10;
+                    // let spacing =
+                    //     (avaibale_width - (searchfield_width + search_button_width)) / 2.0;
 
-                        ui.add_space(spacing);
-                        let searchfield = ui.add(
-                            egui::TextEdit::singleline(&mut self.search_text)
-                                .hint_text("Search here")
-                                .desired_width(searchfield_width)
-                                .min_size(vec2(330.0, 20.0)),
-                        );
-                        let search_button = ui.add(Button::new("🔍"));
+                    let spacing = (avaibale_width - (searchfield_width)) / 2.0;
 
-                        if searchfield.clicked() {
-                            searchfield.request_focus();
-                        }
-                        if !searchfield.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                            || search_button.clicked()
-                        {
-                            let search_string = self.search_text.clone();
-                            let max_reults = self.settings_state.max_results.clone();
-                            let rx = self.tokio_worker.tx.clone();
-                            let ctx_giver = ctx.clone();
+                    ui.add_space(spacing);
+                    let searchfield = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_text)
+                            .hint_text("🔍")
+                            .desired_width(searchfield_width)
+                            .min_size(vec2(330.0, 20.0)),
+                    );
+                    // .on_hover_text("some random text");
+                    // let search_button = ui.add(Button::new("🔍"));
 
-                            tokio::spawn(async move {
-                                let mut data =
-                                    call_yt_api(search_string, max_reults).await.unwrap();
-                                let mut ex_video_ids: Vec<String> = Vec::new();
-                                for item in &data.items {
-                                    if let Some(video_id) = &item.id.video_id {
-                                        ex_video_ids.push(video_id.clone());
-                                    }
+                    // if searchfield.clicked() {
+                    //     searchfield.request_focus();
+                    // }
+                    if !searchfield.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    // || search_button.clicked()
+                    {
+                        let search_string = self.search_text.clone();
+                        let max_reults = self.settings_state.max_results.clone();
+                        let rx = self.tokio_worker.tx.clone();
+                        let ctx_giver = ctx.clone();
+
+                        tokio::spawn(async move {
+                            let mut data = call_yt_api(search_string, max_reults).await.unwrap();
+
+                            let mut ex_video_ids: Vec<String> = Vec::new();
+                            for item in &data.items {
+                                if let Some(video_id) = &item.id.video_id {
+                                    ex_video_ids.push(video_id.clone());
                                 }
-                                set_video_durration(ex_video_ids, &mut data).await.unwrap();
-
-                                rx.send(WorkerMessage::Data(data)).await.unwrap();
-                                // rx.send({ data })
-                                ctx_giver.request_repaint();
-                            });
-
-                            self.search_text.clear();
-                        }
-
-                        ui.add_space(spacing);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                            if ui.add(Button::new("⚙")).clicked() {
-                                self.app_state = AppState::Settings;
                             }
-                        });
-                    })
-                    .response;
-                    ui.allocate_space(vec2(ui.available_width(), 10.0));
+                            set_video_durration(ex_video_ids, &mut data).await.unwrap();
 
-                    ui.add_space(40.0);
-                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink(false)
-                            .show(ui, |ui| {
-                                for (index, item) in &mut self.data.items.iter().enumerate() {
-                                    self.search_item.push(SearchResponseMeta {
-                                        is_enabled: true,
-                                        download_progress: 0,
-                                    });
+                            rx.send(WorkerMessage::Data(data)).await.unwrap();
+                            // rx.send({ data })
+                            ctx_giver.request_repaint();
+                        });
+
+                        self.search_text.clear();
+                    }
+
+                    ui.add_space(spacing);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        if ui.add(Button::new("⚙")).clicked() {
+                            self.app_state = AppState::Settings;
+                        }
+                    });
+                })
+                .response;
+                ui.allocate_space(vec2(ui.available_width(), 10.0));
+
+                ui.add_space(40.0);
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            for (index, item) in &mut self.data.items.iter().enumerate() {
+                                self.search_item.push(SearchResponseMeta {
+                                    is_enabled: true,
+                                    download_progress: 0,
+                                });
+
+                                if result_widget(ui, index, |ui| {
+                                    let scroll_bar: f32 = 10.0;
+                                    ui.set_width(ui.available_width() - scroll_bar);
                                     ui.horizontal(|ui| {
                                         let thumbnail_url: &str = if let Some(ref thumb) =
                                             item.snippet.thumbnails.default
@@ -234,16 +246,19 @@ impl YtGUI {
                                             }
                                         });
                                     });
-                                    ui.add_space(20.0);
-                                    ui.add(egui::Separator::default());
-                                    ui.add_space(20.0);
+                                })
+                                .response
+                                .clicked()
+                                {
+                                    println!("test am Index: {index}");
                                 }
-                            });
-                        ui.allocate_space(ui.available_size());
-                    });
+                                ui.add_space(20.0);
+                            }
+                        });
+                    ui.allocate_space(ui.available_size());
                 });
-            })
-            .response;
+            });
+        });
     }
 }
 
@@ -257,14 +272,19 @@ impl eframe::App for YtGUI {
             self.settings_state.first_run = false;
             self.settings_state.download_path = _DOWNLOAD_PATH.to_string();
         }
+        if "" == self.settings_state.personal_yt_api {
+            self.app_state = AppState::Warning;
+        }
         let screen_rect = ctx.screen_rect();
         let panel_size = calc_grid_size(&screen_rect, None);
         self.side_width = panel_size.side_width;
 
+        //needed to display images
         if !self.image_loader_installed {
             egui_extras::install_image_loaders(ctx);
             self.image_loader_installed = true
         }
+
         if let Ok(msg) = self.tokio_worker.rx.try_recv() {
             match msg {
                 WorkerMessage::Done(index) => {
@@ -277,6 +297,11 @@ impl eframe::App for YtGUI {
                 }
             }
         }
+
+        // if !check_setup_ok() {
+        //     self.app_state = AppState::Warning;
+        // }
+        // UI entry point =>
 
         match self.app_state {
             AppState::App => {
@@ -293,22 +318,26 @@ impl eframe::App for YtGUI {
                             .show(ui, |ui| {
                                 let av_space = ui.available_width();
                                 let spacer = av_space / 2.0;
-                                if ui.button("back to app").clicked() {
+                                if ui.button("back").clicked() {
                                     self.app_state = AppState::App;
                                 }
-                                let button_size = av_space - ui.available_width();
-                                let button_spacer = spacer - button_size;
+                                // let button_size = av_space - ui.available_width();
+                                // let button_spacer = spacer - button_size;
 
                                 // ui.add_space(spacer - button_size);
-                                ui.label("settings");
+                                // ui.label("settings");
                                 // ui.add_space(spacer);
                                 ui.end_row();
                             });
+                        ui.label("settings");
                         ui.add_space(40.0);
                         ui.add(egui::Slider::new(
                             &mut self.settings_state.max_results,
                             0..=25,
                         ));
+                        if ui.button("delete Api key").clicked() {
+                            self.settings_state.personal_yt_api = "".to_string();
+                        }
                         if ui.button("press me").clicked() {
                             let output = std::process::Command::new("pwd").output();
                             println!("{:?}", output);
@@ -320,9 +349,28 @@ impl eframe::App for YtGUI {
                             println!("{:?}", output);
                         }
                     },
-                    false,
+                    true,
                 );
             }
+            AppState::Warning => layout(
+                self.side_width,
+                ctx,
+                |ui| {
+                    ui.label("Warning no api Key found. Make sure you enter your Youtube API Key in here!");
+                    if !ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.settings_state.personal_yt_api)
+                                .hint_text("paste your api key"),
+                        )
+                        .has_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    {
+                        println!("{}", self.settings_state.personal_yt_api);
+                        self.app_state = AppState::App;
+                    }
+                },
+                false,
+            ),
             AppState::Test => {
                 layout(
                     self.side_width,
@@ -465,15 +513,13 @@ async fn main() {
     };
 
     let app = eframe::run_native(
-        "Hier Name",
+        "Hier cooler Name 2",
         options,
         Box::new(|cc| Ok(Box::new(YtGUI::new(cc)))),
     );
     if let Err(error) = app {
         eprint!("Fehler beim Starten der App: {}", error);
     }
-
-    // let _data = call_yt_api("this is the best song".to_string(), 10);
 }
 
 fn layout<Central>(
@@ -509,31 +555,35 @@ async fn call_yt_api(
     query: String,
     max_results: i8,
 ) -> Result<SearchResponse, Box<dyn std::error::Error>> {
-    let yt_key: String = env::var("YT_API").unwrap();
-    // let yt_key: String = "nein NeinA".to_string();
+    // let yt_key: String = env::var("YT_API").unwrap();
+    if let Ok(yt_key) = env::var("YT_API") {
+        println!("{}", yt_key);
+        let url = format!(
+            "https://www.googleapis.com/youtube/v3/search?part=snippet&q={}&key={}&maxResults={}&type=video&videCategoryId=10",
+            query.replace(" ", "%20"),
+            yt_key,
+            max_results
+        );
+        println!("{url}");
 
-    let url = format!(
-        "https://www.googleapis.com/youtube/v3/search?part=snippet&q={}&key={}&maxResults={}&type=video&videCategoryId=10",
-        query.replace(" ", "%20"),
-        yt_key,
-        max_results
-    );
-    println!("{url}");
-
-    let client = Client::new();
-    let response = client.get(&url).send().await?;
-    if !response.status().is_success() {
-        println!("Request failed: {}", response.status());
+        let client = Client::new();
+        let response = client.get(&url).send().await?;
+        if !response.status().is_success() {
+            println!("Request failed: {}", response.status());
+        }
+        let data: SearchResponse = response.json::<SearchResponse>().await?;
+        println!("Alle Youtube Title: ");
+        let mut index: i8 = 1;
+        for item in &data.items {
+            let video_title = &item.snippet.title;
+            println!("{index}: {video_title}");
+            index += 1;
+        }
+        Ok(data)
+    } else {
+        println!("No key detected");
+        Err("YT_API Key not found".into())
     }
-    let data: SearchResponse = response.json::<SearchResponse>().await?;
-    println!("Alle Youtube Title: ");
-    let mut index: i8 = 1;
-    for item in &data.items {
-        let video_title = &item.snippet.title;
-        println!("{index}: {video_title}");
-        index += 1;
-    }
-    Ok(data) // main must return something, in this case (). Finish request block and change Result type to SeachResponse
 }
 
 async fn set_video_durration(
@@ -736,6 +786,31 @@ async fn downlaod_from_dlp(
     Ok(())
 }
 
+fn result_widget<R>(
+    ui: &mut Ui,
+    id: impl Hash,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.push_id(id, |ui| {
+        let frame = egui::Frame::new()
+            .fill(Color32::from_gray(30))
+            .corner_radius(8)
+            .inner_margin(10.0)
+            .stroke(egui::Stroke::new(1.0, Color32::from_gray(60)));
+
+        let inner_response = frame.show(ui, |ui| add_contents(ui));
+        let rect = inner_response.response.rect;
+        let response = ui.interact(rect, ui.id(), egui::Sense::click());
+
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, 8, Color32::from_black_alpha(30));
+        }
+        InnerResponse::new(inner_response.inner, response)
+    })
+    .inner
+}
+
 async fn test_io() -> Result<(), Box<dyn std::error::Error>> {
     println!("starting test_io");
     let mut child = tokio::process::Command::new("ping")
@@ -754,4 +829,13 @@ async fn test_io() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn check_setup_ok() -> bool {
+    // check for env:
+    if let Ok(_api_key) = env::var("YT_API") {
+        true
+    } else {
+        false
+    }
 }
