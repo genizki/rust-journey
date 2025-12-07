@@ -1,4 +1,7 @@
 mod locale;
+mod share;
+mod ui;
+mod worker;
 
 use eframe::egui::{self, Button, Color32, CornerRadius, InnerResponse, Rect, Stroke, Ui, vec2};
 use serde::{Deserialize, Serialize};
@@ -28,16 +31,9 @@ const YT_DLP_BINARY: &str = "./yt_dlp/yt-dlp.exe";
 #[cfg(target_os = "macos")]
 const YT_DLP_BINARY: &str = "./yt_dlp/yt-dlp_macos";
 
-enum WorkerMessage {
-    Data(SearchResponse),
-    Progress(u32),
-    Error(String),
-    Done(usize),
-}
-
 struct TokioWorker {
-    tx: tokio::sync::mpsc::Sender<WorkerMessage>,
-    rx: tokio::sync::mpsc::Receiver<WorkerMessage>,
+    tx: tokio::sync::mpsc::Sender<share::WorkerMessage>,
+    rx: tokio::sync::mpsc::Receiver<share::WorkerMessage>,
 }
 impl Default for TokioWorker {
     fn default() -> Self {
@@ -75,14 +71,14 @@ impl SettingsState {
 
 #[derive(Default)]
 struct YtGUI {
-    data: SearchResponse,
-    search_item: Vec<SearchResponseMeta>,
-    search_text: String,
-    side_width: f32,
-    settings_state: SettingsState,
-    image_loader_installed: bool,
-    app_state: AppState,
-    tokio_worker: TokioWorker,
+    pub data: share::SearchResponse,
+    pub search_item: Vec<share::SearchResponseMeta>,
+    pub search_text: String,
+    pub side_width: f32,
+    pub settings_state: SettingsState,
+    pub image_loader_installed: bool,
+    pub app_state: AppState,
+    pub tokio_worker: TokioWorker,
 }
 
 impl YtGUI {
@@ -144,7 +140,7 @@ impl YtGUI {
                             }
                             set_video_durration(ex_video_ids, &mut data).await.unwrap();
 
-                            rx.send(WorkerMessage::Data(data)).await.unwrap();
+                            rx.send(share::WorkerMessage::Data(data)).await.unwrap();
                             // rx.send({ data })
                             ctx_giver.request_repaint();
                         });
@@ -168,91 +164,80 @@ impl YtGUI {
                         .auto_shrink(false)
                         .show(ui, |ui| {
                             for (index, item) in &mut self.data.items.iter().enumerate() {
-                                self.search_item.push(SearchResponseMeta {
+                                self.search_item.push(share::SearchResponseMeta {
                                     is_enabled: true,
                                     download_progress: 0,
                                 });
 
-                                if result_widget(ui, index, |ui| {
-                                    let scroll_bar: f32 = 10.0;
-                                    ui.set_width(ui.available_width() - scroll_bar);
-                                    ui.horizontal(|ui| {
-                                        let thumbnail_url: &str = if let Some(ref thumb) =
-                                            item.snippet.thumbnails.default
-                                        {
-                                            &thumb.url
-                                        } else {
-                                            "notfound"
-                                        };
+                                if self.search_item[index].is_enabled {
+                                    if result_widget(ui, index, |ui| {
+                                        let scroll_bar: f32 = 10.0;
+                                        ui.set_width(ui.available_width() - scroll_bar);
+                                        ui.horizontal(|ui| {
+                                            let thumbnail_url: &str = if let Some(ref thumb) =
+                                                item.snippet.thumbnails.default
+                                            {
+                                                &thumb.url
+                                            } else {
+                                                "notfound"
+                                            };
 
-                                        let image = egui::Image::from_uri(thumbnail_url)
-                                            .fit_to_exact_size(vec2(WIDTH, HEIGHT));
-                                        ui.vertical(|ui| {
-                                            ui.add(image);
-                                            if let Some(duration) = item.video_durration.as_ref() {
-                                                ui.label(duration);
-                                            }
+                                            let image = egui::Image::from_uri(thumbnail_url)
+                                                .fit_to_exact_size(vec2(WIDTH, HEIGHT));
+                                            ui.vertical(|ui| {
+                                                ui.add(image);
+                                                if let Some(duration) =
+                                                    item.video_durration.as_ref()
+                                                {
+                                                    ui.label(duration);
+                                                }
+                                            });
+
+                                            ui.add_space(40.0);
+                                            ui.vertical(|ui| {
+                                                ui.label(&item.snippet.title);
+                                                ui.colored_label(
+                                                    Color32::GRAY,
+                                                    &item.snippet.channel_title,
+                                                );
+                                                ui.add_space(10.0);
+                                            });
                                         });
-
-                                        ui.add_space(40.0);
-                                        ui.vertical(|ui| {
-                                            ui.label(&item.snippet.title);
-                                            ui.colored_label(
-                                                Color32::GRAY,
-                                                &item.snippet.channel_title,
+                                    })
+                                    .response
+                                    .clicked()
+                                    {
+                                        self.search_item[index].is_enabled = false;
+                                        if let Some(video_id) = &item.id.video_id {
+                                            let yt_link = format!(
+                                                "https://www.youtube.com/watch?v={}",
+                                                video_id
                                             );
-                                            ui.add_space(10.0);
+                                            println!("{}", &self.settings_state.download_path);
+                                            let path = self.settings_state.download_path.clone();
+                                            let yt_link = yt_link.clone(); // auch Borrow zu String machen!
+                                            let item_id = index.clone();
 
-                                            if self.search_item[index].is_enabled {
-                                                if ui.add(egui::Button::new("Download")).clicked() {
-                                                    self.search_item[index].is_enabled = false;
-                                                    if let Some(video_id) = &item.id.video_id {
-                                                        let yt_link = format!(
-                                                            "https://www.youtube.com/watch?v={}",
-                                                            video_id
-                                                        );
-                                                        println!(
-                                                            "{}",
-                                                            &self.settings_state.download_path
-                                                        );
-                                                        let path = self
-                                                            .settings_state
-                                                            .download_path
-                                                            .clone();
-                                                        let yt_link = yt_link.clone(); // auch Borrow zu String machen!
-                                                        let item_id = index.clone();
-
-                                                        let tx = self.tokio_worker.tx.clone();
-                                                        tokio::spawn(async move {
-                                                            let error_handle = downlaod_from_dlp(
-                                                                tx, item_id, &yt_link, &path, "aac",
-                                                            )
-                                                            .await;
-                                                            match error_handle {
-                                                                Ok(()) => {}
-                                                                Err(error) => eprintln!(
-                                                                    "download failed with: {error}"
-                                                                ),
-                                                            }
-                                                        });
-                                                    } else {
-                                                        println!(
-                                                            "Fehler Video_id nicht gefunden. Think"
-                                                        );
+                                            let tx = self.tokio_worker.tx.clone();
+                                            tokio::spawn(async move {
+                                                let error_handle = downlaod_from_dlp(
+                                                    tx, item_id, &yt_link, &path, "aac",
+                                                )
+                                                .await;
+                                                match error_handle {
+                                                    Ok(()) => {}
+                                                    Err(error) => {
+                                                        eprintln!("download failed with: {error}")
                                                     }
                                                 }
-                                            } else {
-                                                ui.add(egui::Spinner::new());
-                                            }
-                                        });
-                                    });
-                                })
-                                .response
-                                .clicked()
-                                {
-                                    println!("test am Index: {index}");
+                                            });
+                                        } else {
+                                            println!("Fehler Video_id nicht gefunden. Think");
+                                        }
+                                        println!("test am Index: {index}");
+                                    }
+                                    ui.add_space(20.0);
                                 }
-                                ui.add_space(20.0);
                             }
                         });
                     ui.allocate_space(ui.available_size());
@@ -287,12 +272,12 @@ impl eframe::App for YtGUI {
 
         if let Ok(msg) = self.tokio_worker.rx.try_recv() {
             match msg {
-                WorkerMessage::Done(index) => {
+                share::WorkerMessage::Done(index) => {
                     self.search_item[index].is_enabled = true;
                 }
-                WorkerMessage::Progress(progress_value) => {}
-                WorkerMessage::Error(error_msg) => {}
-                WorkerMessage::Data(data) => {
+                share::WorkerMessage::Progress(progress_value) => {}
+                share::WorkerMessage::Error(error_msg) => {}
+                share::WorkerMessage::Data(data) => {
                     self.data = data;
                 }
             }
@@ -554,7 +539,7 @@ fn layout<Central>(
 async fn call_yt_api(
     query: String,
     max_results: i8,
-) -> Result<SearchResponse, Box<dyn std::error::Error>> {
+) -> Result<share::SearchResponse, Box<dyn std::error::Error>> {
     // let yt_key: String = env::var("YT_API").unwrap();
     if let Ok(yt_key) = env::var("YT_API") {
         println!("{}", yt_key);
@@ -571,7 +556,7 @@ async fn call_yt_api(
         if !response.status().is_success() {
             println!("Request failed: {}", response.status());
         }
-        let data: SearchResponse = response.json::<SearchResponse>().await?;
+        let data: share::SearchResponse = response.json::<share::SearchResponse>().await?;
         println!("Alle Youtube Title: ");
         let mut index: i8 = 1;
         for item in &data.items {
@@ -588,7 +573,7 @@ async fn call_yt_api(
 
 async fn set_video_durration(
     video_id: Vec<String>,
-    meta_data: &mut SearchResponse,
+    meta_data: &mut share::SearchResponse,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let final_string = video_id.join(",");
     let key = env::var("YT_API").unwrap();
@@ -629,103 +614,13 @@ async fn set_video_durration(
     Ok(())
 }
 
-#[derive(Default)]
-struct SearchDuration {
-    items: Vec<SearchDurationItem>,
-}
-
-#[derive(Default)]
-struct SearchDurationItem {
-    video_id: String,
-    video_durration: String,
-}
-
-struct SearchResponseMeta {
-    is_enabled: bool,
-    download_progress: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct SearchResponse {
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    etag: String,
-    #[serde(rename = "nextPageToken", default)]
-    next_page_token: String,
-    #[serde(rename = "regionCode", default)]
-    region_code: String,
-    #[serde(rename = "pageInfo", default)]
-    page_info: Option<PageInfo>,
-    #[serde(default)]
-    items: Vec<SearchItem>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SearchItem {
-    pub kind: String,
-    pub etag: String,
-    pub id: Id,
-    pub snippet: Snippet,
-    #[serde(skip)]
-    pub is_enabled: bool,
-    #[serde(skip)]
-    pub video_durration: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PageInfo {
-    #[serde(rename = "totalResults")]
-    pub total_results: u64,
-    #[serde(rename = "resultsPerPage")]
-    pub results_per_page: u64,
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Id {
-    pub kind: String,
-    #[serde(rename = "videoId")]
-    pub video_id: Option<String>,
-    #[serde(rename = "channelId")]
-    pub channel_id: Option<String>,
-    #[serde(rename = "playlistId")]
-    pub playlist_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Snippet {
-    #[serde(rename = "publishedAt")]
-    pub published_at: String,
-    #[serde(rename = "channelId")]
-    pub channel_id: String,
-    pub title: String,
-    pub description: String,
-    pub thumbnails: Thumbnails,
-    #[serde(rename = "channelTitle")]
-    pub channel_title: String,
-    #[serde(rename = "liveBroadcastContent")]
-    pub live_broadcast_content: String,
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Thumbnails {
-    pub default: Option<ThumbnailData>,
-    pub medium: Option<ThumbnailData>,
-    pub high: Option<ThumbnailData>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ThumbnailData {
-    pub url: String,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-}
-
 struct PanelSize {
     side_width: f32,
     _central_width: f32,
 }
 
 async fn downlaod_from_dlp(
-    rx: tokio::sync::mpsc::Sender<WorkerMessage>,
+    rx: tokio::sync::mpsc::Sender<share::WorkerMessage>,
     item_id: usize,
     url: &String,
     download_path: &String,
@@ -782,7 +677,7 @@ async fn downlaod_from_dlp(
         }
     }
 
-    rx.send(WorkerMessage::Done(item_id)).await.unwrap();
+    rx.send(share::WorkerMessage::Done(item_id)).await.unwrap();
     Ok(())
 }
 
