@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 pub enum WorkerMessage {
     Data(SearchResponse),
@@ -6,6 +7,78 @@ pub enum WorkerMessage {
     Error(String),
     Done(usize),
 }
+
+// Tokio worker for async operations
+pub struct TokioWorker {
+    pub tx: mpsc::Sender<WorkerMessage>,
+    pub rx: mpsc::Receiver<WorkerMessage>,
+}
+
+impl Default for TokioWorker {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::channel(100); // Buffer size of 100
+        Self { tx, rx }
+    }
+}
+
+// Panel size structure for UI layout
+pub struct PanelSize {
+    pub side_width: f32,
+    pub _central_width: f32,
+}
+
+// App state management
+#[derive(Default)]
+pub enum AppState {
+    #[default]
+    App,
+    Settings,
+    Warning,
+    Test,
+}
+
+// Settings state
+#[derive(Serialize, Deserialize)]
+pub struct SettingsState {
+    pub max_results: i8,
+    pub first_run: bool,
+    pub download_path: String,
+    pub personal_yt_api: String,
+}
+
+impl SettingsState {
+    pub fn default() -> Self {
+        Self {
+            max_results: 10,
+            first_run: true,
+            download_path: "".to_string(),
+            personal_yt_api: "".to_string(),
+        }
+    }
+}
+
+impl Default for SettingsState {
+    fn default() -> Self {
+        Self::default()
+    }
+}
+
+// UI Constants
+pub const WIDTH: f32 = 120.0;
+pub const HEIGHT: f32 = 120.0;
+
+// Platform-specific paths
+#[cfg(target_os = "macos")]
+pub const DOWNLOAD_PATH: &str = "~/Downloads";
+
+#[cfg(target_os = "windows")]
+pub const DOWNLOAD_PATH: &str = "%USERPROFILE%\\Downloads";
+
+#[cfg(target_os = "windows")]
+pub const YT_DLP_BINARY: &str = "./yt_dlp/yt-dlp.exe";
+
+#[cfg(not(target_os = "windows"))]
+pub const YT_DLP_BINARY: &str = "./yt_dlp/yt-dlp_macos";
 
 pub struct SearchResponseMeta {
     pub is_enabled: bool,
