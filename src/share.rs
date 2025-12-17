@@ -42,6 +42,7 @@ pub enum AppState {
 pub struct SettingsState {
     pub max_results: i8,
     pub first_run: bool,
+    pub window_scaling: f32,
     pub download_path: String,
     pub personal_yt_api: String,
 }
@@ -51,6 +52,7 @@ impl SettingsState {
         Self {
             max_results: 10,
             first_run: true,
+            window_scaling: 2.5,
             download_path: "".to_string(),
             personal_yt_api: "".to_string(),
         }

@@ -1,5 +1,5 @@
 use crate::share::*;
-use crate::worker::{call_yt_api, download_from_dlp, set_video_durration, test_io};
+use crate::worker::{call_yt_api, download_from_dlp, set_video_durration};
 use eframe::egui::{self, Button, Color32, InnerResponse, Rect, Ui, vec2};
 use std::hash::Hash;
 
@@ -55,8 +55,7 @@ impl YtGUI {
                     let searchfield = ui.add(
                         egui::TextEdit::singleline(&mut self.search_text)
                             .hint_text("🔍")
-                            .desired_width(searchfield_width)
-                            .min_size(vec2(330.0, 20.0)),
+                            .desired_width(searchfield_width),
                     );
 
                     if !searchfield.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -200,6 +199,8 @@ impl YtGUI {
             &mut self.settings_state.max_results,
             0..=25,
         ));
+        ui.label("Window Scaling:");
+        ui.add(egui::Slider::new(&mut self.settings_state.window_scaling, 1.0..=4.0).text("Scale"));
         if ui.button("delete Api key").clicked() {
             self.settings_state.personal_yt_api = "".to_string();
         }
@@ -229,44 +230,6 @@ impl YtGUI {
             self.app_state = AppState::App;
         }
     }
-
-    pub fn render_test(&mut self, ui: &mut egui::Ui) {
-        if ui.button("yt_dlp me").clicked() {
-            let args = [
-                "-x",
-                "--audio-format",
-                "aac",
-                "-o",
-                "~/Downloads/%(title)s.%(ext)s",
-                "--add-metadata",
-                "https://www.youtube.com/watch?v=5kfPCxXZPdA",
-                "--ffmpeg-location",
-                "./ffmpeg/ffmpeg",
-            ];
-            let output = std::process::Command::new(YT_DLP_BINARY)
-                .args(&args)
-                .output()
-                .expect("Failed halt");
-            println!("{:?}", output);
-            println!("Exit status: {}", output.status);
-
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-            if !stdout_str.trim().is_empty() {
-                println!("stdout:\n{}", stdout_str);
-            }
-
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
-            if !stderr_str.trim().is_empty() {
-                println!("stderr:\n{}", stderr_str);
-            }
-        }
-        if ui.button("test").clicked() {
-            println!("test clicked");
-            tokio::spawn(async move {
-                let _ = test_io().await;
-            });
-        }
-    }
 }
 
 impl eframe::App for YtGUI {
@@ -275,8 +238,8 @@ impl eframe::App for YtGUI {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_pixels_per_point(self.settings_state.window_scaling);
         if !self.settings_state.first_run {
-            global_fontsize(ctx);
             self.settings_state.first_run = false;
             self.settings_state.download_path = DOWNLOAD_PATH.to_string();
         }
@@ -284,7 +247,7 @@ impl eframe::App for YtGUI {
             self.app_state = AppState::Warning;
         }
         let screen_rect = ctx.screen_rect();
-        let panel_size = calc_grid_size(&screen_rect, None);
+        let panel_size = calc_grid_size(&screen_rect);
         self.side_width = panel_size.side_width;
 
         if !self.image_loader_installed {
@@ -315,42 +278,12 @@ impl eframe::App for YtGUI {
             AppState::Warning => {
                 layout(self.side_width, ctx, |ui| self.render_warning(ui), false);
             }
-            AppState::Test => {
-                layout(self.side_width, ctx, |ui| self.render_test(ui), true);
-            }
+            AppState::Test => {}
         }
     }
 }
 
-pub fn global_fontsize(ctx: &egui::Context) {
-    ctx.style_mut(|style| {
-        style.text_styles = [
-            (
-                egui::TextStyle::Heading,
-                egui::FontId::new(32.0, egui::FontFamily::Proportional),
-            ),
-            (
-                egui::TextStyle::Body,
-                egui::FontId::new(22.0, egui::FontFamily::Proportional),
-            ),
-            (
-                egui::TextStyle::Button,
-                egui::FontId::new(22.0, egui::FontFamily::Proportional),
-            ),
-            (
-                egui::TextStyle::Monospace,
-                egui::FontId::new(20.0, egui::FontFamily::Monospace),
-            ),
-            (
-                egui::TextStyle::Small,
-                egui::FontId::new(16.0, egui::FontFamily::Proportional),
-            ),
-        ]
-        .into();
-    });
-}
-
-pub fn calc_grid_size(screen_rect: &Rect, scaling_factor: Option<f32>) -> PanelSize {
+pub fn calc_grid_size(screen_rect: &Rect) -> PanelSize {
     const WIDTH_THRESHOLD: f32 = 1000.0;
 
     let screen_max = screen_rect.max;
@@ -361,7 +294,7 @@ pub fn calc_grid_size(screen_rect: &Rect, scaling_factor: Option<f32>) -> PanelS
     central_width = max_width;
 
     if central_width >= WIDTH_THRESHOLD {
-        side_width = (max_width - WIDTH_THRESHOLD) / scaling_factor.unwrap_or(2.5);
+        side_width = (max_width - WIDTH_THRESHOLD) / 2.5;
         central_width = central_width - side_width;
     }
 
